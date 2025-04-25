@@ -1,4 +1,4 @@
-name: Dynamic Daily Rainfall Scraper
+name: Dynamic Daily Temperature Scraper
 
 on:
   schedule:
