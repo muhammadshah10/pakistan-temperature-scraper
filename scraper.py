@@ -11,7 +11,6 @@ url = "https://nwfc.pmd.gov.pk/new/max-temp.php"
 # Start session
 session = requests.Session()
 session.headers.update({
-    # A more common User-Agent string
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 })
 
@@ -34,7 +33,7 @@ temp_data = []
 print("\n🌡️ Scraping Max Temperature Data...\n")
 for station_id, station_name in tqdm(station_list, desc="🔍 Scraping", unit="station"):
     form_data = {
-        'station': station_id,
+        'station': station_id, # station_id is already a string from opt['value']
         'filter': 'station'
     }
 
@@ -55,43 +54,37 @@ for station_id, station_name in tqdm(station_list, desc="🔍 Scraping", unit="s
                     date_str = cols[3].text.strip()
 
                     if not date_str: # Skip if date string is empty
-                        # print(f"ℹ️ Empty date for {station_name}, temp row. Skipping.")
                         continue
                     
-                    # Parse date string to datetime object
-                    # The site seems to use "DD Mon, YYYY" e.g., "29 May, 2024"
-                    # pd.to_datetime usually handles this well
                     parsed_date = pd.to_datetime(date_str, errors='coerce') 
                     
                     if pd.isna(parsed_date): # Skip if date could not be parsed
-                        # print(f"⚠️ Warning: Could not parse date '{date_str}' for {station_name} (temp). Skipping row.")
                         continue
 
                     record = {
-                        'Station ID': station_id,
+                        'Station ID': str(station_id), # Ensure station_id is stored as string
                         'Station Name': station_name,
                         'Province': province,
                         'Reported Station': reported_station,
-                        'Max Temp (°C)': temp_str, # Keep as string, assuming it's like "35.0"
+                        'Max Temp (°C)': temp_str,
                         'Date': parsed_date # Store as datetime object
                     }
                     temp_data.append(record)
 
-                    # 👇 Live output row by row (format date for printing)
-                    print(f"{record['Station ID']}, {record['Station Name']}, {record['Province']}, "
-                          f"{record['Reported Station']}, {record['Max Temp (°C)']}, {record['Date'].strftime('%d %b, %Y')}")
+                    # Optional: Live output row by row
+                    # print(f"{record['Station ID']}, {record['Station Name']}, {record['Province']}, "
+                    #       f"{record['Reported Station']}, {record['Max Temp (°C)']}, {record['Date'].strftime('%d %b, %Y')}")
     
     except requests.exceptions.Timeout:
-        print(f"❌ Timeout occurred for {station_name} (temp)")
+        print(f"❌ Timeout occurred for {station_name} (ID: {station_id}) (temp)")
     except requests.exceptions.RequestException as e:
-        print(f"❌ Request Error on {station_name} (temp): {e}")
+        print(f"❌ Request Error on {station_name} (ID: {station_id}) (temp): {e}")
     except Exception as e:
-        print(f"❌ An unexpected error occurred on {station_name} (temp): {e}")
+        print(f"❌ An unexpected error occurred on {station_name} (ID: {station_id}) (temp): {e}")
 
-    time.sleep(0.5)  # Respect server
+    time.sleep(0.25)  # Adjusted sleep time, modify if necessary
 
 # Step 4: Convert to DataFrame
-# 'Date' column will be of datetime64[ns] type here
 new_df = pd.DataFrame(temp_data)
 
 if new_df.empty:
@@ -99,53 +92,111 @@ if new_df.empty:
     if os.path.exists("testTemp.csv"):
          print(f"📁 Existing data remains in: testTemp.csv\n")
     exit()
+else:
+    # Ensure 'Station ID' in new_df is string type.
+    if 'Station ID' in new_df.columns:
+        new_df['Station ID'] = new_df['Station ID'].astype(str)
+    else:
+        print("⚠️ Critical Error: 'Station ID' column is missing in newly scraped temperature data. Cannot proceed.")
+        exit()
+    # 'Date' column in new_df is already datetime64 type.
 
 # Step 5: (Original step for blank dates now handled by parsing checks above)
-# Ensure 'Date' column is clean in new_df
-new_df = new_df.dropna(subset=['Date'])
-
+# new_df should already have a clean 'Date' column.
 
 # Step 6: Load existing CSV if exists, then merge
 csv_file = "testTemp.csv"
+combined_df = new_df.copy() # Initialize with new_df.
+
 if os.path.exists(csv_file):
+    print(f"\nℹ️ Existing CSV file '{csv_file}' found. Attempting to load and merge temperature data.")
     try:
-        existing_df = pd.read_csv(csv_file)
-        # Convert 'Date' column in existing_df to datetime objects
-        # Explicitly try to infer datetime format if dayfirst might be ambiguous
-        # However, if we save in '%d %b, %Y', pandas should handle it
-        existing_df['Date'] = pd.to_datetime(existing_df['Date'], errors='coerce')
-        existing_df = existing_df.dropna(subset=['Date']) # Remove rows where date couldn't be parsed
+        # Read 'Station ID' as string to ensure type consistency.
+        existing_df = pd.read_csv(csv_file, dtype={'Station ID': str})
         
-        # Concatenate old and new data
-        combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+        if existing_df.empty:
+            print(f"ℹ️ Existing temperature CSV '{csv_file}' was loaded but is empty. Will use new data only.")
+            # combined_df is already new_df
+        else:
+            # Ensure 'Station ID' from existing_df is string.
+            if 'Station ID' in existing_df.columns:
+                existing_df['Station ID'] = existing_df['Station ID'].astype(str)
+            else:
+                print(f"⚠️ Warning: 'Station ID' column not found in existing temp CSV '{csv_file}'. Cannot reliably merge. Using new data only.")
+                existing_df = pd.DataFrame() # Empty to prevent further processing
+
+            if not existing_df.empty and 'Date' in existing_df.columns:
+                existing_df['Date'] = pd.to_datetime(existing_df['Date'], errors='coerce')
+                existing_df.dropna(subset=['Date'], inplace=True)
+                
+                if existing_df.empty:
+                    print(f"ℹ️ Existing temp CSV '{csv_file}' became empty after date parsing/cleaning. Will use new data only.")
+                    # combined_df is already new_df
+                else:
+                    print(f"✅ Successfully loaded and processed {len(existing_df)} rows from existing temperature data in '{csv_file}'. Merging with {len(new_df)} new rows.")
+                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                    print(f"ℹ️ Combined temperature DataFrame has {len(combined_df)} rows before deduplication.")
+            elif not existing_df.empty:
+                 print(f"⚠️ Warning: 'Date' column not found in existing temp CSV '{csv_file}'. Cannot reliably merge. Using new data only.")
+                 # combined_df is already new_df
+                 
     except pd.errors.EmptyDataError:
-        print(f"⚠️ Existing CSV '{csv_file}' is empty. Will use new temperature data only.")
-        combined_df = new_df
+        print(f"⚠️ Existing temp CSV '{csv_file}' is empty (caught EmptyDataError). Will use new data only.")
+        # combined_df is already new_df
     except Exception as e:
-        print(f"⚠️ Error reading existing CSV '{csv_file}': {e}. Will use new temperature data only.")
-        combined_df = new_df
+        print(f"⚠️ Error reading or processing existing temp CSV '{csv_file}': {e}. Will use new data only.")
+        # combined_df is already new_df
 else:
-    combined_df = new_df
+    print(f"ℹ️ No existing temp CSV file found at '{csv_file}'. Starting with new temperature data only.")
+    # combined_df is already new_df
 
-# Step 7: Convert Date column to datetime and clean
-# This ensures consistency if there were different paths taken above.
-combined_df['Date'] = pd.to_datetime(combined_df['Date'], errors='coerce')
-combined_df = combined_df.dropna(subset=['Date'])  # Remove rows where Date couldn't be parsed
+# Step 7: Final processing on combined_df
+if not combined_df.empty:
+    # Ensure 'Date' column is datetime type
+    if 'Date' in combined_df.columns:
+        combined_df['Date'] = pd.to_datetime(combined_df['Date'], errors='coerce')
+        combined_df.dropna(subset=['Date'], inplace=True) 
+    else:
+        print("⚠️ Warning: 'Date' column missing in combined temperature DataFrame. Cannot perform date-based operations.")
 
-# Remove duplicates:
-# key for duplicates: Station ID, Date, and Reported Station
-# keep='last' ensures that data from the latest scrape (new_df) is preferred.
-combined_df = combined_df.drop_duplicates(subset=['Station ID', 'Date', 'Reported Station'], keep='last')
+    # Ensure 'Station ID' is string type before deduplication
+    if 'Station ID' in combined_df.columns:
+        combined_df['Station ID'] = combined_df['Station ID'].astype(str)
+    else:
+        print("⚠️ Warning: 'Station ID' column missing in combined temperature DataFrame. Cannot perform deduplication.")
+
+    # Remove duplicates
+    dedup_cols = ['Station ID', 'Date', 'Reported Station']
+    if all(col in combined_df.columns for col in dedup_cols) and not combined_df.empty:
+        initial_rows = len(combined_df)
+        combined_df.drop_duplicates(subset=dedup_cols, keep='last', inplace=True)
+        print(f"ℹ️ Deduplication removed {initial_rows - len(combined_df)} rows from temperature data. Combined DataFrame now has {len(combined_df)} rows.")
+    elif not combined_df.empty:
+        print(f"⚠️ Skipping deduplication for temperature data because one or more key columns ({dedup_cols}) are missing or DataFrame is empty.")
+
+else:
+    print("\n⚠️ Combined temperature DataFrame is empty before final processing. Nothing to save.")
+
 
 # Step 8: Sort and save
-combined_df = combined_df.sort_values(by=['Date', 'Station Name'], ascending=[False, True])
+if not combined_df.empty and 'Date' in combined_df.columns:
+    sort_by_cols = ['Date', 'Station Name']
+    if all(col in combined_df.columns for col in sort_by_cols):
+        combined_df.sort_values(by=sort_by_cols, ascending=[False, True], inplace=True)
+    elif 'Date' in combined_df.columns:
+        print("ℹ️ 'Station Name' column missing in temp data, sorting by 'Date' only.")
+        combined_df.sort_values(by=['Date'], ascending=False, inplace=True)
+    
+    combined_df['Date'] = combined_df['Date'].dt.strftime('%d %b, %Y')
 
-# OPTIONAL: Convert 'Date' column to desired string format '%d %b, %Y' before saving.
-# If you prefer the default pandas date format in CSV (YYYY-MM-DD), you can remove/comment out this line.
-combined_df['Date'] = combined_df['Date'].dt.strftime('%d %b, %Y')
+    try:
+        combined_df.to_csv(csv_file, index=False, encoding='utf-8-sig')
+        print(f"\n✅ Max Temperature scraping and processing completed successfully!")
+        print(f"📁 Updated temperature data saved to: {csv_file} ({len(combined_df)} rows)\n")
+    except Exception as e:
+        print(f"❌ Error saving temperature data to CSV '{csv_file}': {e}")
 
-# Save the CSV with proper encoding to handle special characters like °C
-combined_df.to_csv(csv_file, index=False, encoding='utf-8-sig')
-
-print("\n✅ Max Temperature scraping and processing completed successfully!")
-print(f"📁 Updated data saved to: {csv_file}\n")
+elif combined_df.empty:
+    print("\n⚠️ Combined temperature data is empty after all processing. Nothing was saved.")
+else:
+    print(f"\n⚠️ Combined temperature data is not empty ({len(combined_df)} rows) but essential 'Date' column is missing. Cannot save in standard format.")
