@@ -4,6 +4,10 @@ import pandas as pd
 import time
 from tqdm import tqdm
 import os
+import urllib3
+
+# Disable SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Base URL
 url = "https://nwfc.pmd.gov.pk/new/max-temp.php"
@@ -16,7 +20,7 @@ session.headers.update({
 
 # Step 1: Get station list
 try:
-    response = session.get(url, timeout=20)
+    response = session.get(url, timeout=20, verify=False)  # Bypass SSL verification
     response.raise_for_status()
 except requests.exceptions.RequestException as e:
     print(f"❌ Error fetching station list: {e}")
@@ -36,7 +40,7 @@ for station_id, station_name in tqdm(station_list, desc="🔍 Scraping", unit="s
     }
 
     try:
-        res = session.post(url, data=form_data, timeout=10)
+        res = session.post(url, data=form_data, timeout=10, verify=False)  # Bypass SSL verification
         res.raise_for_status()
         page = BeautifulSoup(res.text, 'html.parser')
         table = page.find("table", class_="table table-bordered")
