@@ -25,7 +25,6 @@ jobs:
 
       - name: 📦 Install dependencies
         run: |
-          # pip install requests beautifulsoup4 pandas tqdm
           pip install requests beautifulsoup4 pandas tqdm urllib3
 
       - name: 🚀 Run scraper
